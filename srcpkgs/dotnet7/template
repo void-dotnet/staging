@@ -1,0 +1,218 @@
+# Template file for 'dotnet7'
+pkgname=dotnet7
+version=7.0.110
+revision=1
+archs="x86_64"
+build_style=meta
+short_desc=".NET components meta package"
+maintainer="Ryan Boggs <rmboggs@gmail.com>"
+license="MIT"
+homepage="https://dotnet.microsoft.com"
+
+# Additional version strings used throughout template
+_name_ver="${pkgname}-${version}"
+_bootstrapver="7.0.109"
+_installer_tag="v${version}"
+
+# All depends
+hostmakedepends="clang cmake curl git inetutils llvm tar"
+makedepends="icu-devel mit-krb5-devel libgit2-devel llvm-libunwind-devel
+libxml2-devel lldb-devel lttng-ust-devel nodejs-devel openssl-devel zlib-devel"
+depends="dotnet7-sdk aspnetcore7-runtime dotnet7-runtime dotnet7-hostfxr
+ dotnet-host dotnet7-apphost-pack dotnet7-targeting-pack aspnetcore7-targeting-pack
+ netstandard-targeting-pack dotnet7-templates"
+
+_sourcebuilt_name="Private.SourceBuilt.Artifacts.${_bootstrapver}.tar.gz"
+_installer_name="dotnet-${_installer_tag}.tar.xz"
+distfiles="https://lab.ilot.io/mirrors/installer/-/releases/${_installer_tag}/downloads/tarball/${_installer_name} https://dotnetcli.azureedge.net/source-built-artifacts/assets/${_sourcebuilt_name}"
+checksum="bf7e6a947d46caf3a6d790f71b8b2cd94ffb64a4aefb95096f531b8949220029 0c980a59d345b35e48e1ef7e20f0575502ac9d1e2859d16965fde35eaf1f3b07"
+
+# https://docs.microsoft.com/en-US/dotnet/core/rid-catalog#linux-rids
+case "${XBPS_TARGET_MACHINE}" in
+  x86_64) _build_arch="x64";;
+  armv7l) _build_arch="arm";;
+  aarch64) _build_arch="arm64";;
+esac
+
+do_extract() {
+    local src_dir="${wrksrc}/sources"
+    mkdir -p "${src_dir}"
+    cd "${src_dir}"
+    bsdtar xf ${XBPS_SRCDISTDIR}/${_name_ver}/${_installer_name} --strip-components=1 -C ${src_dir}
+}
+post_extract() {
+	# Now link the artifacts file to the expected location
+    cd "${wrksrc}/sources"
+	ln -sf "${XBPS_SRCDISTDIR}/${_name_ver}/${_sourcebuilt_name}" packages/archive/
+}
+
+#pre_configure() {
+#	cd "${wrksrc}"
+
+    # contrary to what the name suggests, running the script with these flags
+    # just fetches the complete sources needed to build the SDK
+#	./build.sh \
+#		/p:ArcadeBuildTarball=true \
+#		/p:TarballDir="${wrksrc}/sources"
+#}
+
+do_configure() {
+    cd "${wrksrc}/sources"
+	./prep.sh --bootstrap
+}
+
+do_patch() {
+	# Forces crossgen2 output to be turned off always, currently breaks build if left to true
+	vsed -e "s|<InnerBuildArgs Condition=\"'\$(SourceBuildUseMonoRuntime)' == 'true'\">\$(InnerBuildArgs) /p:CrossgenOutput=false|<InnerBuildArgs>\$(InnerBuildArgs) /p:CrossgenOutput=false|g" \
+		 -i sources/src/aspnetcore/eng/SourceBuild.props
+
+	# Disable package validation
+	vsed -e "s|<EnablePackageValidation>true</EnablePackageValidation>|<EnablePackageValidation>false</EnablePackageValidation>|g" \
+		 -i sources/src/runtime/eng/packaging.targets
+
+	# telemetry opt-out
+	vsed -e "s|defaultValue: CompileOptions.TelemetryOptOutDefault|defaultValue: true|g" \
+		 -i sources/src/sdk/src/Cli/dotnet/Program.cs
+
+    # Disable source link in installer project file
+    vsed -e "s|    <BuildCommandArgs>\$(BuildCommandArgs) /p:OSName=\$(OSNameOverride)</BuildCommandArgs>|    <BuildCommandArgs>\$(BuildCommandArgs) /p:OSName=\$(OSNameOverride)</BuildCommandArgs><BuildCommandArgs>\$(BuildCommandArgs) \/p:EnableSourceLink=false<\/BuildCommandArgs>|g" \
+         -i sources/repos/installer.proj
+}
+
+do_build() {
+    cd "${wrksrc}/sources"
+	./build.sh \
+		-- \
+		/v:n \
+		/p:LogVerbosity=n \
+		/p:SkipPortableRuntimeBuild=true
+}
+
+do_install() {
+	cd "${wrksrc}/sources/artifacts/${_build_arch}/Release"
+	bsdtar -xf "dotnet-sdk-${version}-void-${_build_arch}.tar.gz"
+
+	vmkdir usr/lib/dotnet
+	vcopy dotnet usr/lib/dotnet
+	vcopy host usr/lib/dotnet
+	vcopy packs usr/lib/dotnet
+	vcopy sdk usr/lib/dotnet
+	vcopy shared usr/lib/dotnet
+	vcopy templates usr/lib/dotnet
+
+	vmkdir etc/dotnet
+	echo '/usr/lib/dotnet' > "${DESTDIR}"/etc/dotnet/install_location
+
+	vmkdir etc/profile.d
+	vcopy "${FILESDIR}"/dotnet.sh etc/profile.d
+
+	vmkdir usr/bin
+	ln -s /usr/lib/dotnet/dotnet "${DESTDIR}"/usr/bin/dotnet
+}
+
+dotnet-host_package() {
+	short_desc=".NET Command Line Interface"
+	pkg_install() {
+        local src_dir="${wrksrc}/sources"
+		vmove usr/lib/dotnet/dotnet
+		vmove usr/bin/dotnet
+		vmove etc/dotnet/install_location
+		vmove etc/profile.d/dotnet.sh
+
+		cd "${src_dir}/src/sdk/scripts"
+		vcompletion register-completions.bash bash
+		vcompletion register-completions.zsh zsh
+
+		vlicense "${src_dir}/artifacts/${_build_arch}/Release/LICENSE.txt"
+		vlicense "${src_dir}/artifacts/${_build_arch}/Release/ThirdPartyNotices.txt"
+		# there are 2 dotnet.1 manpages; one in the runtime and one in the sdk. On
+		# closer inspection this one is titled dotnet-cli(1) at the top. sdk
+		# manpages are included here because they are referenced by
+		# dotnet-cli(1).
+		cd "${src_dir}/src/runtime/docs/manpages/host"
+		vman dotnet.1 dotnet-cli.1
+		cd "${src_dir}/src/sdk/documentation/manpages/sdk"
+		for f in *.1; do
+			vman $f
+		done
+	}
+}
+
+dotnet7-hostfxr_package() {
+	short_desc=".NET Command Line Interface"
+	depends="dotnet-host"
+	pkg_install() {
+		vmove usr/lib/dotnet/host/fxr
+		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
+	}
+}
+
+dotnet7-runtime_package() {
+	short_desc=".NET runtime"
+	depends="dotnet7-hostfxr"
+	pkg_install() {
+		vmove usr/lib/dotnet/shared/Microsoft.NETCore.App
+		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
+	}
+}
+
+aspnetcore7-runtime_package() {
+	short_desc="ASP.NET runtime"
+	depends="dotnet7-runtime"
+	pkg_install() {
+		vmove usr/lib/dotnet/shared/Microsoft.AspNetCore.App
+		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
+	}
+}
+
+dotnet7-sdk_package() {
+	short_desc=".NET SDK"
+	depends="dotnet7-runtime aspnetcore7-runtime dotnet7-targeting-pack
+	 aspnetcore7-targeting-pack netstandard-targeting-pack dotnet7-apphost-pack
+	 dotnet7-templates"
+	pkg_install() {
+		vmove usr/lib/dotnet/sdk
+		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
+	}
+}
+
+dotnet7-apphost-pack_package() {
+	short_desc=".NET apphost pack"
+	pkg_install() {
+		vmove usr/lib/dotnet/packs/Microsoft.NETCore.App.Host.void-x64
+		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
+	}
+}
+
+dotnet7-targeting-pack_package() {
+	short_desc=".NET targeting pack"
+	pkg_install() {
+		vmove usr/lib/dotnet/packs/Microsoft.NETCore.App.Ref
+		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
+	}
+}
+
+aspnetcore7-targeting-pack_package() {
+	short_desc="ASP.NET targeting pack"
+	pkg_install() {
+		vmove usr/lib/dotnet/packs/Microsoft.AspNetCore.App.Ref
+		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
+	}
+}
+
+dotnet7-templates_package() {
+	short_desc=".NET SDK templates"
+	pkg_install() {
+		vmove usr/lib/dotnet/templates
+		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
+
+	}
+}
+
+netstandard-targeting-pack_package() {
+	short_desc=".NET Standard targeting pack"
+	pkg_install() {
+		vmove usr/lib/dotnet/packs/NETStandard.Library.Ref
+		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
+	}
+}

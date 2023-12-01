@@ -1,6 +1,6 @@
-# Template file for 'dotnet7'
-pkgname=dotnet7
-version=7.0.114
+# Template file for 'dotnet6'
+pkgname=dotnet6
+version=6.0.125
 revision=1
 archs="x86_64 aarch64"
 build_style=meta
@@ -17,13 +17,13 @@ _installer_tag="v${version}"
 hostmakedepends="clang cmake curl git inetutils llvm tar"
 makedepends="icu-devel mit-krb5-devel libgit2-devel llvm-libunwind-devel
 libxml2-devel lldb-devel lttng-ust-devel nodejs-devel openssl-devel zlib-devel"
-depends="dotnet7-sdk aspnetcore7-runtime dotnet7-runtime dotnet7-hostfxr
- dotnet-host dotnet7-apphost-pack dotnet7-targeting-pack aspnetcore7-targeting-pack
- netstandard-targeting-pack dotnet7-templates"
+depends="dotnet6-sdk aspnetcore6-runtime dotnet6-runtime dotnet6-hostfxr
+ dotnet-host dotnet6-apphost-pack dotnet6-targeting-pack aspnetcore6-targeting-pack
+ netstandard-targeting-pack dotnet6-templates"
 
 _installer_name="dotnet-${_installer_tag}.tar.xz"
 distfiles="https://lab.ilot.io/mirrors/installer/-/releases/${_installer_tag}/downloads/tarball/${_installer_name}"
-checksum="4e9b8a4d58e8111b05ad79ae6ed399993effd0480a104b6a22ea10eee66d72e7"
+checksum="369da80df7bf6fe2f4932784eae2d6418e2009e1476145023464deb7f51734df"
 
 # https://docs.microsoft.com/en-US/dotnet/core/rid-catalog#linux-rids
 case "${XBPS_TARGET_MACHINE}" in
@@ -45,21 +45,13 @@ do_configure() {
 }
 
 do_patch() {
-	# Forces crossgen2 output to be turned off always, currently breaks build if left to true
-	vsed -e "s|<InnerBuildArgs Condition=\"'\$(SourceBuildUseMonoRuntime)' == 'true'\">\$(InnerBuildArgs) /p:CrossgenOutput=false|<InnerBuildArgs>\$(InnerBuildArgs) /p:CrossgenOutput=false|g" \
-		 -i sources/src/aspnetcore/eng/SourceBuild.props
-
 	# Disable package validation
-	vsed -e "s|<EnablePackageValidation>true</EnablePackageValidation>|<EnablePackageValidation>false</EnablePackageValidation>|g" \
-		 -i sources/src/runtime/eng/packaging.targets
+	vsed -e's| /p:BuildDebPackage=false<| /p:BuildDebPackage=false /p:EnablePackageValidation=false<|' \
+		 -i sources/src/runtime/eng/SourceBuild.props
 
 	# telemetry opt-out
-	vsed -e "s|defaultValue: CompileOptions.TelemetryOptOutDefault|defaultValue: true|g" \
+	vsed -e "s|\"DOTNET_CLI_TELEMETRY_OPTOUT\", defaultValue: false|\"DOTNET_CLI_TELEMETRY_OPTOUT\", defaultValue: true|g" \
 		 -i sources/src/sdk/src/Cli/dotnet/Program.cs
-
-    # Disable source link in installer project file
-    vsed -e "s|    <BuildCommandArgs>\$(BuildCommandArgs) /p:OSName=\$(OSNameOverride)</BuildCommandArgs>|    <BuildCommandArgs>\$(BuildCommandArgs) /p:OSName=\$(OSNameOverride)</BuildCommandArgs><BuildCommandArgs>\$(BuildCommandArgs) \/p:EnableSourceLink=false<\/BuildCommandArgs>|g" \
-         -i sources/repos/installer.proj
 }
 
 do_build() {
@@ -93,81 +85,54 @@ do_install() {
 	ln -s /usr/lib/dotnet/dotnet "${DESTDIR}"/usr/bin/dotnet
 }
 
-dotnet-host_package() {
-	short_desc=".NET Command Line Interface"
-	pkg_install() {
-        local src_dir="${wrksrc}/sources"
-		vmove usr/lib/dotnet/dotnet
-		vmove usr/bin/dotnet
-		vmove etc/dotnet/install_location
-		vmove etc/profile.d/dotnet.sh
-
-		cd "${src_dir}/src/sdk/scripts"
-		vcompletion register-completions.bash bash
-		vcompletion register-completions.zsh zsh
-
-		vlicense "${src_dir}/artifacts/${_build_arch}/Release/LICENSE.txt"
-		vlicense "${src_dir}/artifacts/${_build_arch}/Release/ThirdPartyNotices.txt"
-		# there are 2 dotnet.1 manpages; one in the runtime and one in the sdk. On
-		# closer inspection this one is titled dotnet-cli(1) at the top. sdk
-		# manpages are included here because they are referenced by
-		# dotnet-cli(1).
-		cd "${src_dir}/src/runtime/docs/manpages/host"
-		vman dotnet.1 dotnet-cli.1
-		cd "${src_dir}/src/sdk/documentation/manpages/sdk"
-		for f in *.1; do
-			vman $f
-		done
-	}
-}
-
-dotnet7-hostfxr_package() {
+dotnet6-hostfxr_package() {
 	short_desc=".NET Command Line Interface"
 	depends="dotnet-host"
 	pkg_install() {
 		vmove usr/lib/dotnet/host/fxr
 		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
+		vlicense "${_wrksrc}"/sources/artifacts/x64/Release/LICENSE.txt
 	}
 }
 
-dotnet7-runtime_package() {
+dotnet6-runtime_package() {
 	short_desc=".NET runtime"
-	depends="dotnet7-hostfxr"
+	depends="dotnet6-hostfxr"
 	pkg_install() {
 		vmove usr/lib/dotnet/shared/Microsoft.NETCore.App
 		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
 	}
 }
 
-aspnetcore7-runtime_package() {
+aspnetcore6-runtime_package() {
 	short_desc="ASP.NET runtime"
-	depends="dotnet7-runtime"
+	depends="dotnet6-runtime"
 	pkg_install() {
 		vmove usr/lib/dotnet/shared/Microsoft.AspNetCore.App
 		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
 	}
 }
 
-dotnet7-sdk_package() {
+dotnet6-sdk_package() {
 	short_desc=".NET SDK"
-	depends="dotnet7-runtime aspnetcore7-runtime dotnet7-targeting-pack
-	 aspnetcore7-targeting-pack netstandard-targeting-pack dotnet7-apphost-pack
-	 dotnet7-templates"
+	depends="dotnet6-runtime aspnetcore6-runtime dotnet6-targeting-pack
+	 aspnetcore6-targeting-pack netstandard-targeting-pack dotnet6-apphost-pack
+	 dotnet6-templates"
 	pkg_install() {
 		vmove usr/lib/dotnet/sdk
 		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
 	}
 }
 
-dotnet7-apphost-pack_package() {
+dotnet6-apphost-pack_package() {
 	short_desc=".NET apphost pack"
 	pkg_install() {
-		vmove usr/lib/dotnet/packs/Microsoft.NETCore.App.Host.void-x64
+		vmove usr/lib/dotnet/packs/Microsoft.NETCore.App.Host.linux-x64
 		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
 	}
 }
 
-dotnet7-targeting-pack_package() {
+dotnet6-targeting-pack_package() {
 	short_desc=".NET targeting pack"
 	pkg_install() {
 		vmove usr/lib/dotnet/packs/Microsoft.NETCore.App.Ref
@@ -175,7 +140,7 @@ dotnet7-targeting-pack_package() {
 	}
 }
 
-aspnetcore7-targeting-pack_package() {
+aspnetcore6-targeting-pack_package() {
 	short_desc="ASP.NET targeting pack"
 	pkg_install() {
 		vmove usr/lib/dotnet/packs/Microsoft.AspNetCore.App.Ref
@@ -183,19 +148,10 @@ aspnetcore7-targeting-pack_package() {
 	}
 }
 
-dotnet7-templates_package() {
+dotnet6-templates_package() {
 	short_desc=".NET SDK templates"
 	pkg_install() {
 		vmove usr/lib/dotnet/templates
-		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
-
-	}
-}
-
-netstandard-targeting-pack_package() {
-	short_desc=".NET Standard targeting pack"
-	pkg_install() {
-		vmove usr/lib/dotnet/packs/NETStandard.Library.Ref
 		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
 	}
 }

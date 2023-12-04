@@ -32,6 +32,15 @@ case "${XBPS_TARGET_MACHINE}" in
   aarch64) _build_arch="arm64";;
 esac
 
+# Need to explicity set the target RID when building as dotnet6
+# currently has issues trying to set this value automaticaly
+_target_rid="linux"
+if [ "${XBPS_LIBC}" == "musl" ]; then
+    _target_rid="${_target_rid}-musl"
+fi
+# Add the arch at the end
+_target_rid="${_target_rid}-${_build_arch}"
+
 do_extract() {
     local src_dir="${wrksrc}/sources"
     mkdir -p "${src_dir}"
@@ -60,12 +69,13 @@ do_build() {
 		-- \
 		/v:n \
 		/p:LogVerbosity=n \
-		/p:SkipPortableRuntimeBuild=true
+		/p:SkipPortableRuntimeBuild=true \
+		/p:TargetRid="${_target_rid}"
 }
 
 do_install() {
 	cd "${wrksrc}/sources/artifacts/${_build_arch}/Release"
-	bsdtar -xf "dotnet-sdk-${version}-void-${_build_arch}.tar.gz"
+	bsdtar -xf "dotnet-sdk-${version}-${_target_rid}.tar.gz"
 
 	vmkdir usr/lib/dotnet
 	vcopy dotnet usr/lib/dotnet
@@ -91,7 +101,6 @@ dotnet6-hostfxr_package() {
 	pkg_install() {
 		vmove usr/lib/dotnet/host/fxr
 		vlicense "${wrksrc}/sources/artifacts/${_build_arch}/Release/LICENSE.txt"
-		vlicense "${_wrksrc}"/sources/artifacts/x64/Release/LICENSE.txt
 	}
 }
 
